@@ -106,20 +106,26 @@ function provider(ratio = 10n, sellOutput?: (r: QuoteRequest) => bigint): PaperQ
     },
   };
 }
-const target = (mint = MINT, price = '1'): OpportunityTarget => ({
-  mint,
-  priceSol: price,
-  provenance: 'explicit_test_forecast',
-  observedAt: Date.now(),
-  expiresAt: Date.now() + 60000,
-});
-const liquidity = (mint = MINT, usd = '1000000'): RiskLiquidity => ({
-  mint,
-  usd,
-  provenance: 'MODEL_liquidity_fixture',
-  observedAt: Date.now(),
-  expiresAt: Date.now() + 60000,
-});
+const target = (mint = MINT, price = '1'): OpportunityTarget => {
+  const now = Date.now();
+  return {
+    mint,
+    priceSol: price,
+    provenance: 'explicit_test_forecast',
+    observedAt: now,
+    expiresAt: now + 60000,
+  };
+};
+const liquidity = (mint = MINT, usd = '1000000'): RiskLiquidity => {
+  const now = Date.now();
+  return {
+    mint,
+    usd,
+    provenance: 'MODEL_liquidity_fixture',
+    observedAt: now,
+    expiresAt: now + 60000,
+  };
+};
 const signal = (mint = MINT) => ({
   token: mint,
   side: 'buy',

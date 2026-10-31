@@ -300,14 +300,18 @@ describe.skipIf(!hasTestDatabase)('combined exit and bot control lifecycle', () 
         };
         const manager = new RiskManager(single, source, entryModel, {
           ownerPaperScenario: true,
-          liquidity: async (mint) => ({
-            mint,
-            usd: '1000000',
-            provenance: 'MODEL_combined_liquidity',
-            observedAt: Date.now(),
-            expiresAt: Date.now() + 60000,
-          }),
+          liquidity: async (mint) => {
+            const now = Date.now();
+            return {
+              mint,
+              usd: '1000000',
+              provenance: 'MODEL_combined_liquidity',
+              observedAt: now,
+              expiresAt: now + 60000,
+            };
+          },
         });
+        const targetObservedAt = Date.now();
         const decision = await manager.submitSignal(
           bot.id,
           'momentum',
@@ -317,8 +321,8 @@ describe.skipIf(!hasTestDatabase)('combined exit and bot control lifecycle', () 
             mint: MINT,
             priceSol: '1',
             provenance: 'explicit_combined_forecast',
-            observedAt: Date.now(),
-            expiresAt: Date.now() + 60000,
+            observedAt: targetObservedAt,
+            expiresAt: targetObservedAt + 60000,
           },
         );
         expect(decision.status, decision.status === 'vetoed' ? decision.code : undefined).toBe(
