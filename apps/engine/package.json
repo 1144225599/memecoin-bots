@@ -20,7 +20,8 @@
     "paper": "tsx --env-file-if-exists=../../.env --conditions=@memebots/source src/paper/cli.ts",
     "scan:safety": "tsx --env-file-if-exists=../../.env --conditions=@memebots/source src/safety/cli.ts",
     "monitor": "tsx --env-file-if-exists=../../.env --conditions=@memebots/source src/monitoring/cli.ts",
-    "exit": "tsx --env-file-if-exists=../../.env --conditions=@memebots/source src/exits/cli.ts"
+    "exit": "tsx --env-file-if-exists=../../.env --conditions=@memebots/source src/exits/cli.ts",
+    "risk": "tsx --env-file-if-exists=../../.env --conditions=@memebots/source src/risk/cli.ts"
   },
   "dependencies": {
     "@memebots/core": "workspace:*",

@@ -6,3 +6,4 @@ export * from './market-event.js';
 export * from './execution.js';
 export * from './execution-validation.js';
 export * from './bot-control.js';
+export * from './risk-admission.js';

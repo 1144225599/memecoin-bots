@@ -8,7 +8,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWatchdog } from '../../../apps/engine/src/monitoring/watchdog.js';
 
 import { setAuditActor } from './audit.js';
-import { migrateDown, migrateUp } from './migrate.js';
+import { loadMigrations, migrateDown, migrateUp } from './migrate.js';
 import {
   acquireBotLeases,
   auditStartup,
@@ -407,7 +407,8 @@ describe.skipIf(!hasTestDatabase)('durable monitoring and automatic audit', () =
   it('monitoring down/up keeps canonical audit history and rebuilds expectations for persisted bots', async () => {
     await bot();
     const count = (await pool.query('SELECT count(*) FROM audit_log')).rows[0].count;
-    await migrateDown(pool, 1);
+    const later = (await loadMigrations()).filter((m) => m.version > '0012');
+    await migrateDown(pool, later.length + 1);
     expect((await pool.query('SELECT count(*) FROM audit_log')).rows[0].count).toBe(count);
     await migrateUp(pool);
     expect((await pool.query('SELECT * FROM bot_heartbeats')).rowCount).toBe(1);

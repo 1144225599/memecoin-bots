@@ -1,8 +1,8 @@
 # Editable risk profiles (BOT-10)
 
-These are persisted **paper-only configuration**. The current runtime does not size
-orders, execute exits or enforce reward:risk. A future risk/exit manager must consume
-these limits; editing a profile does not currently change an open position's exits.
+These are persisted **paper-only configuration**. The [risk admission service](ADMISSION.md)
+now consumes entry sizing, reward:risk and admission limits. Existing positions keep
+their saved stop/ladder; editing a profile does not silently rewrite those exit rules.
 All bots keep referencing the same stable profile ID after an edit.
 
 | Profile      | Size | Stop | Take profit: original size @ gain | Trail | Min RR | Open positions | Daily loss | Safety   |

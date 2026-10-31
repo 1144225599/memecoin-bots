@@ -125,8 +125,13 @@ See `CONTRIBUTING.md` for how work flows through ProjectBrain.
 An explicit order-processing CLI now simulates approved fixed-quantity paper orders
 using read-only Jupiter V2 amount quotes, with durable exact accounting, deterministic
 latency/slippage/failure scenarios and restart recovery. The owner demo is explicitly
-marked as a manual paper scenario; no production risk manager or live execution is
-enabled. See [paper execution and evidence limits](docs/paper-broker.md).
+marked as a manual paper scenario that bypasses automated admission; live execution
+remains unavailable. See [paper execution and evidence limits](docs/paper-broker.md).
+
+The explicit [risk admission pipeline](docs/risk/ADMISSION.md) now accepts strategy
+signals, records every veto, sizes paper orders and binds broker execution to durable
+receipts. Production buys remain denied while mandatory safety coverage is unknown;
+successful owner paper scenarios are explicitly labeled.
 
 ### Token safety evidence (BOT-9)
 

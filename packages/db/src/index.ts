@@ -10,3 +10,4 @@ export * from './wallet-management/index.js';
 export * from './position-exits.js';
 
 export * from './bot-control.js';
+export * from './risk-admission.js';

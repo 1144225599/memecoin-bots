@@ -12,6 +12,15 @@ import { exitAuthorityValid, exitBuyIsFenced } from './position-exits.js';
 import { recordAudit } from './audit.js';
 import { withTransaction } from './pool.js';
 import type { Pool, Queryable } from './pool.js';
+import {
+  beginRiskSettlement,
+  reconcileRiskSettlement,
+  riskAdmissionFailure,
+  riskQuoteFailure,
+  riskSpendFailure,
+  auditRiskBoundaryError,
+  recordFinalRiskVeto,
+} from './risk-admission.js';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const MINT = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -152,9 +161,11 @@ function matches(order: OrderRow, intent: ApprovedOrderIntent, requirePaperMode 
     throw new Error('PERSISTED_ORDER_MISMATCH');
 }
 export async function registerPaperIntent(pool: Pool, intent: ApprovedOrderIntent): Promise<void> {
-  await withTransaction(pool, (db) => registerPaperIntentInTransaction(db, intent));
+  await withTransaction(pool, (db) => registerPaperIntentInTransaction(db, intent)).catch((error) =>
+    auditRiskBoundaryError(pool, intent, error, 'registration'),
+  );
 }
-/** Reuse a held bot-first transaction without acquiring another pooled connection. */
+/** Internal admission primitive: caller retains the bot-first transaction, no nested pool. */
 export async function registerPaperIntentInTransaction(
   db: Queryable,
   intent: ApprovedOrderIntent,
@@ -162,6 +173,8 @@ export async function registerPaperIntentInTransaction(
   validatePaperIntent(intent);
   const order = await lockedPaperOrder(db, intent.orderId);
   matches(order, intent);
+  const denial = await riskAdmissionFailure(db, intent);
+  if (denial) throw new Error(denial);
   if (order.bot_mode !== 'paper' || !(await exitAuthorityValid(db, intent)))
     throw new Error('APPROVAL_AUTHORITY_REQUIRED');
   if (await exitBuyIsFenced(db, intent)) throw new Error('POSITION_EXIT_FROZEN');
@@ -265,6 +278,8 @@ export async function preparePaperAttempt(
       if (existing.rows[0].order_id !== intent.orderId) throw new Error('IDEMPOTENCY_CONFLICT');
       return toAttempt(existing.rows[0]);
     }
+    const denial = await riskAdmissionFailure(db, intent, model);
+    if (denial) throw new Error(denial);
     if (order.bot_mode !== 'paper' || !(await exitAuthorityValid(db, intent)))
       throw new Error('APPROVAL_AUTHORITY_REQUIRED');
     if (await exitBuyIsFenced(db, intent)) throw new Error('POSITION_EXIT_FROZEN');
@@ -308,7 +323,7 @@ export async function preparePaperAttempt(
       },
     });
     return toAttempt(rows[0]!);
-  });
+  }).catch((error) => auditRiskBoundaryError(pool, intent, error, 'preparation'));
 }
 export async function loadPaperQuote(
   db: Queryable,
@@ -347,6 +362,14 @@ export async function cancelPaperOrder(pool: Pool, id: string): Promise<void> {
     if (order.mode !== 'paper' || order.bot_mode !== 'paper') throw new Error('MODE_MISMATCH');
     if (['pending', 'partially_filled'].includes(order.status)) {
       await db.query("UPDATE orders SET status='cancelled' WHERE id=$1", [id]);
+      if (
+        (await db.query<{ t: string | null }>("SELECT to_regclass('risk_reservations')::text t"))
+          .rows[0]?.t
+      )
+        await db.query(
+          "UPDATE risk_reservations SET state='terminal',debit_remaining=0,loss_remaining=0 WHERE admission_id IN (SELECT id FROM risk_admissions WHERE order_id=$1)",
+          [id],
+        );
       await recordAudit(db, {
         actor: 'owner',
         action: 'paper.cancelled',
@@ -415,6 +438,7 @@ export async function settlePaperAttempt(
     ).rows[0];
     // Time must be sampled AFTER every potentially blocking order/bot/position lock.
     const now = integer(executionClock(), 1, Number.MAX_SAFE_INTEGER);
+    const riskDay = await beginRiskSettlement(db, intent.botId);
     const evidence = await loadPaperQuote(db, attempt.id);
     const toZero = (
       reason: string,
@@ -428,9 +452,13 @@ export async function settlePaperAttempt(
       networkFeeLamports: '0',
       priorityFeeLamports: '0',
     });
+    const admissionDenial =
+      (await riskAdmissionFailure(db, intent, attempt.model, false)) ??
+      (await riskQuoteFailure(db, intent, attempt.inputRaw, evidence, candidate));
     if (order.bot_mode !== 'paper' || !(await exitAuthorityValid(db, intent)))
       candidate = toZero('EXIT_AUTHORITY_OR_MODE_REVOKED', 'cancelled');
     else if (order.status === 'cancelled') candidate = toZero('CANCELLED', 'cancelled');
+    else if (admissionDenial) candidate = toZero(admissionDenial);
     else if (now >= intent.expiresAt) candidate = toZero('INTENT_EXPIRED');
     else if (!executionStillFresh()) candidate = toZero('MONOTONIC_DEADLINE_EXPIRED');
     else if (now < attempt.startedAt) candidate = toZero('CLOCK_MOVED_BACKWARD');
@@ -532,9 +560,20 @@ export async function settlePaperAttempt(
         pos.token_mint !== intent.tokenMint ||
         pos.mode !== 'paper' ||
         pos.status !== 'open');
+    const budgetFailure =
+      fills || submittedFailure
+        ? await riskSpendFailure(db, {
+            botId: intent.botId,
+            orderId: order.id,
+            positionId: pos?.id,
+            debit: (intent.side === 'buy' ? input : 0n) + fees,
+            closes: fills && intent.side === 'sell' && !!pos && input === BigInt(pos.remaining_raw),
+          })
+        : null;
     if (
       (fills || submittedFailure) &&
-      (posBad ||
+      (budgetFailure ||
+        posBad ||
         ((fills || submittedFailure) &&
           intent.side === 'sell' &&
           (!pos || BigInt(pos.remaining_raw) < BigInt(attempt.inputRaw))) ||
@@ -546,11 +585,12 @@ export async function settlePaperAttempt(
           createdPositionId !== pos.id))
     ) {
       result = none(
-        posBad
-          ? 'POSITION_MISMATCH'
-          : BigInt(order.paper_bankroll_lamports) < spend
-            ? 'INSUFFICIENT_PAPER_SOL'
-            : 'INSUFFICIENT_OR_CONFLICTING_HOLDINGS',
+        budgetFailure ??
+          (posBad
+            ? 'POSITION_MISMATCH'
+            : BigInt(order.paper_bankroll_lamports) < spend
+              ? 'INSUFFICIENT_PAPER_SOL'
+              : 'INSUFFICIENT_OR_CONFLICTING_HOLDINGS'),
       );
       input = 0n;
       output = 0n;
@@ -661,6 +701,17 @@ export async function settlePaperAttempt(
       'INSERT INTO paper_execution_results(attempt_id,order_id,result,fill_id) VALUES($1,$2,$3,$4)',
       [attempt.id, order.id, JSON.stringify(result), fillId],
     );
+    await reconcileRiskSettlement(db, {
+      botId: intent.botId,
+      orderId: order.id,
+      attemptId: attempt.id,
+      side: intent.side,
+      model: attempt.model,
+      result,
+      positionBefore: pos,
+      day: riskDay,
+    });
+    await recordFinalRiskVeto(db, intent, result);
     await recordAudit(db, {
       actor: 'system',
       action: 'paper.attempt_settled',
