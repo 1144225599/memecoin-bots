@@ -22,7 +22,7 @@ import { normalizeJupiterQuote } from '../../../apps/engine/src/paper/quote.js';
 import type { PaperQuoteProvider, QuoteRequest } from '../../../apps/engine/src/paper/quote.js';
 import { fixtureAddress, goodScenario } from '../../../apps/engine/src/safety/fixtures.js';
 import { unknownEvidence } from '../../../apps/engine/src/safety/evidence.js';
-import { migrateDown, migrateUp } from './migrate.js';
+import { migrateDown, migrateUp, loadMigrations } from './migrate.js';
 import { createPool, withTransaction } from './pool.js';
 import { SafetyStore } from './safety.js';
 import { cancelPaperOrder, registerPaperIntent } from './paper-execution.js';
@@ -541,11 +541,12 @@ describe.skipIf(!hasTestDatabase)('risk admission and real paper pipeline', () =
     ).toBe(0);
   });
   it('risk migration round-trips empty accounting, and refuses destructive rollback with active admission', async () => {
-    await migrateDown(pool);
+    const riskAndLater = (await loadMigrations()).filter((m) => m.version >= '0013').length;
+    await migrateDown(pool, riskAndLater);
     await migrateUp(pool);
     await setPaperRiskCap(pool, botId, '1000000000000000000000000000000');
     approved(await admit());
-    await expect(migrateDown(pool)).rejects.toThrow('risk accounting in use');
+    await expect(migrateDown(pool, riskAndLater)).rejects.toThrow('risk accounting in use');
   });
   it('actual risk pipeline reuses the admitted quote without a second rate-budget request', async () => {
     const source = provider();
