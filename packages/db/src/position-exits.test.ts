@@ -9,7 +9,7 @@ import { PaperBroker } from '../../../apps/engine/src/paper/broker.js';
 import { normalizeJupiterQuote } from '../../../apps/engine/src/paper/quote.js';
 import type { PaperQuoteProvider, QuoteRequest } from '../../../apps/engine/src/paper/quote.js';
 import { PositionExitManager } from '../../../apps/engine/src/exits/manager.js';
-import { migrateUp, migrateDown, migrationStatus } from './migrate.js';
+import { migrateUp, migrateDown, migrationStatus, loadMigrations } from './migrate.js';
 import { createTestPool, hasTestDatabase, resetDatabase, TEST_DATABASE_URL } from './test-db.js';
 import { createPool } from './pool.js';
 import {
@@ -419,7 +419,7 @@ describe.skipIf(!hasTestDatabase)('durable position exits', () => {
     expect((await state(id)).filled_steps).toEqual(['400000000', '0']);
   });
   it('migration0014 rolls down and up without editing older migrations', async () => {
-    await migrateDown(pool, 1);
+    await migrateDown(pool, (await loadMigrations()).filter((m) => m.version >= '0014').length);
     expect((await migrationStatus(pool)).find((x) => x.version === '0014')?.appliedAt).toBeNull();
     await migrateUp(pool);
     expect(
@@ -512,7 +512,7 @@ describe.skipIf(!hasTestDatabase)('durable position exits', () => {
     expect((await state(id)).status).toBe('closed');
   });
   it('legacy adoption preserves saved stop/ladder and occurs only once', async () => {
-    await migrateDown(pool, 1);
+    await migrateDown(pool, (await loadMigrations()).filter((m) => m.version >= '0014').length);
     const { id } = await seed({ stop: '0.7' });
     await migrateUp(pool);
     const before = (

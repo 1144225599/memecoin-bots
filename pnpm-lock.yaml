@@ -47,6 +47,9 @@ importers:
       '@memebots/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@memebots/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       fastify:
         specifier: ^5.12.7
         version: 5.12.7

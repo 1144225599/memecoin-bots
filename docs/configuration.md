@@ -101,3 +101,11 @@ No test uses real credentials, provider calls, signing or paid services.
 
 Implementation references: [Node crypto](https://nodejs.org/api/crypto.html) and
 [ADR-1](https://projectbrain.onrender.com/projects/01M6939CB70ZX4PHQ6QQSFZ8H4/plan/rules/01M698GPZT95V63DDRFRNJHJG7).
+
+### Local control panel origin
+
+`API_DASHBOARD_ORIGIN` defaults to `http://127.0.0.1:5173` and accepts only an exact
+HTTP origin with hostname `127.0.0.1` and explicit port. The local session endpoint
+and control API enforce Host/Origin/Fetch-Metadata; mutations additionally require
+JSON and the current session's `X-Local-CSRF` header. Set `API_PORT` consistently
+for API and Vite proxy if changing the API port. See [bot controls](bot-control.md).

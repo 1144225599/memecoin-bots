@@ -8,6 +8,7 @@ export interface AppConfig {
   readonly marketData: 'fixtures' | 'mainnet';
   readonly databaseUrl: Secret;
   readonly discovery: Readonly<{ enabled: boolean; rpcUrl: Secret; wsUrl: Secret }>;
+  readonly dashboardOrigin: string;
   readonly api: Readonly<{ host: '127.0.0.1'; port: number }>;
   readonly providers: Readonly<{
     heliusRpcUrl?: Secret;
@@ -34,6 +35,7 @@ const CONFIG_KEYS = new Set([
   'DATABASE_URL',
   'API_PORT',
   'API_HOST',
+  'API_DASHBOARD_ORIGIN',
   'HELIUS_API_KEY',
   'JUPITER_API_KEY',
   'BOT_MONTHLY_SERVICE_BUDGET_USD',
@@ -249,6 +251,19 @@ export function loadConfig(input: Environment, registry = new SecretRegistry()):
   const marketData = env.BOT_MARKET_DATA ?? 'fixtures';
   if (marketData !== 'fixtures' && marketData !== 'mainnet') fail('BOT_MARKET_DATA');
   if (env.API_HOST !== undefined && env.API_HOST !== '127.0.0.1') fail('API_HOST');
+  const dashboardOrigin = env.API_DASHBOARD_ORIGIN ?? 'http://127.0.0.1:5173';
+  try {
+    const parsed = new URL(dashboardOrigin);
+    if (
+      parsed.protocol !== 'http:' ||
+      parsed.hostname !== '127.0.0.1' ||
+      parsed.origin !== dashboardOrigin ||
+      !parsed.port
+    )
+      fail('API_DASHBOARD_ORIGIN');
+  } catch {
+    fail('API_DASHBOARD_ORIGIN');
+  }
   const budget = integer(env, 'BOT_MONTHLY_SERVICE_BUDGET_USD', 0, 0, 0);
   const heliusKey = credential(env, 'HELIUS_API_KEY');
   const jupiterKey = credential(env, 'JUPITER_API_KEY');
@@ -296,6 +311,7 @@ export function loadConfig(input: Environment, registry = new SecretRegistry()):
   return Object.freeze({
     mode,
     marketData,
+    dashboardOrigin,
     databaseUrl: db,
     discovery,
     api: Object.freeze({

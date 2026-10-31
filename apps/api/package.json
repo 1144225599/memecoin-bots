@@ -13,6 +13,7 @@
   "dependencies": {
     "@memebots/core": "workspace:*",
     "fastify": "^5.12.7",
-    "@memebots/config": "workspace:*"
+    "@memebots/config": "workspace:*",
+    "@memebots/db": "workspace:*"
   }
 }

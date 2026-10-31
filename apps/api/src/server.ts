@@ -1,3 +1,5 @@
+import { registerControl } from './control.js';
+import type { LocalControlOptions } from './control.js';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import type { BotMode } from '@memebots/core';
@@ -12,11 +14,12 @@ export interface HealthResponse {
 export interface ServerOptions {
   readonly mode: BotMode;
   readonly logger?: AppLogger;
+  readonly control?: LocalControlOptions;
 }
 
-export function buildServer({ mode, logger }: ServerOptions): FastifyInstance {
+export function buildServer({ mode, logger, control }: ServerOptions): FastifyInstance {
   // Disable Fastify/Pino's raw request/error sink; all application output uses the shared logger.
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, bodyLimit: 16_384 });
 
   app.addHook('onResponse', async (request, reply) => {
     logger?.info('http_response', { method: request.method, statusCode: reply.statusCode });
@@ -47,5 +50,6 @@ export function buildServer({ mode, logger }: ServerOptions): FastifyInstance {
     liveTradingAvailable: false,
   }));
 
+  if (control) registerControl(app, control);
   return app;
 }

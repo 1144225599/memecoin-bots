@@ -131,7 +131,7 @@ export async function lockedPaperOrder(db: Queryable, id: string): Promise<Order
     `SELECT o.*, b.mode bot_mode, b.paper_bankroll_lamports, t.decimals FROM orders o JOIN bots b ON b.id=o.bot_id JOIN tokens t ON t.mint=o.token_mint WHERE o.id=$1 FOR UPDATE OF o`,
     [id],
   );
-  if (!rows[0]) throw new Error('ORDER_NOT_FOUND');
+  if (!rows[0] || rows[0].bot_id !== identity.bot_id) throw new Error('ORDER_NOT_FOUND');
   return rows[0];
 }
 function matches(order: OrderRow, intent: ApprovedOrderIntent, requirePaperMode = true): void {

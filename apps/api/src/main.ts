@@ -1,3 +1,4 @@
+import { createPool } from '@memebots/db';
 import { createAppContext } from '@memebots/config';
 
 import { buildServer } from './server.js';
@@ -7,7 +8,13 @@ if (!context) {
   process.exitCode = 1;
 } else {
   const { config, logger } = context;
-  const app = buildServer({ mode: config.mode, logger });
+  const pool = createPool(config.databaseUrl.reveal());
+  const app = buildServer({
+    mode: config.mode,
+    logger,
+    control: { pool, apiPort: config.api.port, dashboardOrigin: config.dashboardOrigin },
+  });
+  app.addHook('onClose', async () => pool.end());
   try {
     // Fastify normalizes/mutates listen options; validated configuration stays immutable.
     await app.listen({ ...config.api });

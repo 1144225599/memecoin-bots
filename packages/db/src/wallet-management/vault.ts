@@ -3,7 +3,7 @@ import { createPrivateKey, createPublicKey, generateKeyPairSync, randomUUID } fr
 import { constants } from 'node:fs';
 import { lstat, mkdir, open, realpath, link, unlink, readdir } from 'node:fs/promises';
 import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
-import { encryptSecret } from '@memebots/config';
+import { decryptSecret, encryptSecret } from '@memebots/config';
 import { fail, uuid } from './validation.js';
 
 const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -68,6 +68,7 @@ function secretBytes(input?: Uint8Array): { bytes: Buffer; publicKey: string } {
 export interface OfflineVault {
   /** Writes encrypted material durably before returning public metadata. */
   provision(walletId: string, encryptionKey: Uint8Array, imported?: Uint8Array): Promise<string>;
+  publicKey(walletId: string, encryptionKey: Uint8Array): Promise<string>;
   removeUncommitted(walletId: string): Promise<void>;
   listIds(): Promise<string[]>;
 }
@@ -164,6 +165,41 @@ export async function createOfflineVault(directory: string): Promise<OfflineVaul
       } finally {
         material?.bytes.fill(0);
         await unlink(temporary).catch(() => {});
+      }
+    },
+    async publicKey(id, encryptionKey) {
+      let raw: Buffer | undefined;
+      let material: ReturnType<typeof secretBytes> | undefined;
+      try {
+        await safeDirectory(root);
+        const fd = await open(file(id), constants.O_RDONLY | constants.O_NOFOLLOW);
+        let envelope: string;
+        try {
+          const stat = await fd.stat();
+          if (
+            !stat.isFile() ||
+            (stat.mode & 0o777) !== 0o600 ||
+            stat.uid !== process.getuid?.() ||
+            stat.size > 16384
+          )
+            fail('VAULT_UNAVAILABLE');
+          envelope = await fd.readFile('utf8');
+        } finally {
+          await fd.close();
+        }
+        const value = JSON.parse(decryptSecret(envelope, encryptionKey)) as {
+          walletId?: unknown;
+          keypair?: unknown;
+        };
+        if (value.walletId !== id || typeof value.keypair !== 'string') fail('VAULT_UNAVAILABLE');
+        raw = Buffer.from(value.keypair, 'base64');
+        material = secretBytes(Buffer.from(JSON.stringify([...raw])));
+        return material.publicKey;
+      } catch {
+        return fail('VAULT_UNAVAILABLE');
+      } finally {
+        raw?.fill(0);
+        material?.bytes.fill(0);
       }
     },
     async removeUncommitted(id) {

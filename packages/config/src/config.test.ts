@@ -366,3 +366,23 @@ test('encrypted discovery endpoints supplement environment and reject duplicate 
     /SOLANA_RPC_URL/,
   );
 });
+
+test('accepts only exact loopback dashboard origins with an explicit port', () => {
+  assert.equal(loadConfig(base).dashboardOrigin, 'http://127.0.0.1:5173');
+  assert.equal(
+    loadConfig({ ...base, API_DASHBOARD_ORIGIN: 'http://127.0.0.1:5180' }).dashboardOrigin,
+    'http://127.0.0.1:5180',
+  );
+  for (const origin of [
+    'https://example.com',
+    'http://0.0.0.0:5173',
+    'http://127.0.0.1',
+    'http://127.0.0.1:5173/',
+    'http://user:pass@127.0.0.1:5173',
+    'http://127.0.0.1:5173/path',
+  ])
+    assert.throws(
+      () => loadConfig({ ...base, API_DASHBOARD_ORIGIN: origin }),
+      /API_DASHBOARD_ORIGIN/,
+    );
+});

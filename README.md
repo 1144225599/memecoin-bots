@@ -143,3 +143,13 @@ actual paper holdings through durable stop, TP, trailing and time decisions and
 PaperBroker fills. Policies are snapshotted, TP quantities use frozen original
 holdings, and fill receipts drive restart-safe progress. See
 [position exit setup, evidence and limits](docs/position-exits.md).
+
+### Local bot controls (BOT-15)
+
+The existing dashboard now lists, creates and edits paper bot configurations with
+an offline-prepared dedicated wallet, strategy/profile guidance, optimistic revision
+checks and off/paper controls. Strategies remain unavailable; live requests always
+fail closed. See [offline preparation, local startup and security](docs/bot-control.md).
+Open `http://127.0.0.1:5173/`; Vite proxies `/api/*` to `127.0.0.1:3001`.
+Set matching `API_PORT` in both processes when changing ports, and set the API's
+`API_DASHBOARD_ORIGIN` to the exact dashboard origin (default `http://127.0.0.1:5173`).

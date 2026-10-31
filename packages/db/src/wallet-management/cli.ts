@@ -10,6 +10,7 @@ import {
   setWalletCap,
 } from './accounts.js';
 import { readWalletBalance } from './balance.js';
+import { prepareWallet } from './prepare.js';
 import { createOfflineVault } from './vault.js';
 import { fail, WalletError } from './validation.js';
 
@@ -71,6 +72,22 @@ if (!context) {
       result = { status: 'updated' };
     } else if (command === 'inspect') {
       result = await inspectVault(pool, await createOfflineVault(string(request.vaultDirectory)));
+    } else if (command === 'prepare') {
+      key = input(3, 32);
+      if (key.length !== 32) fail('INVALID_KEY');
+      if (
+        Object.keys(request).some(
+          (k) => !['walletId', 'label', 'spendCapLamports', 'vaultDirectory'].includes(k),
+        )
+      )
+        fail('INVALID_INPUT');
+      result = await prepareWallet(pool, {
+        walletId: string(request.walletId),
+        label: string(request.label),
+        spendCapLamports: amount(request.spendCapLamports),
+        vault: await createOfflineVault(string(request.vaultDirectory)),
+        encryptionKey: key,
+      });
     } else if (command === 'provision' || command === 'create') {
       key = input(3, 32);
       if (key.length !== 32) fail('INVALID_KEY');
