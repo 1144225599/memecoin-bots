@@ -19,7 +19,8 @@
     "smoke:discovery": "tsx --env-file-if-exists=../../.env --conditions=@memebots/source src/market-data/smoke.ts",
     "paper": "tsx --env-file-if-exists=../../.env --conditions=@memebots/source src/paper/cli.ts",
     "scan:safety": "tsx --env-file-if-exists=../../.env --conditions=@memebots/source src/safety/cli.ts",
-    "monitor": "tsx --env-file-if-exists=../../.env --conditions=@memebots/source src/monitoring/cli.ts"
+    "monitor": "tsx --env-file-if-exists=../../.env --conditions=@memebots/source src/monitoring/cli.ts",
+    "exit": "tsx --env-file-if-exists=../../.env --conditions=@memebots/source src/exits/cli.ts"
   },
   "dependencies": {
     "@memebots/core": "workspace:*",

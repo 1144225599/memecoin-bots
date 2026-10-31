@@ -12,7 +12,7 @@ export interface ApprovedOrderIntent {
   readonly maxSlippageBps: number;
   readonly expiresAt: number;
   readonly approval: Readonly<{
-    kind: 'risk_manager' | 'manual_paper_scenario';
+    kind: 'risk_manager' | 'exit_manager' | 'manual_paper_scenario';
     reference: string;
   }>;
   readonly quoteRequirements: Readonly<{

@@ -135,3 +135,11 @@ keeps durable evidence and policy history, and emits a fail-closed JSON report.
 All six checks are mandatory. Positive live LP, developer attribution, sell
 simulation and bundle coverage remain unsupported and explicitly deny. See
 [token safety setup, engineering policies and coverage limits](docs/token-safety.md).
+
+### Position exits (BOT-14)
+
+`pnpm exit once`, `pnpm exit watch` and `pnpm exit inspect <positionId>` manage
+actual paper holdings through durable stop, TP, trailing and time decisions and
+PaperBroker fills. Policies are snapshotted, TP quantities use frozen original
+holdings, and fill receipts drive restart-safe progress. See
+[position exit setup, evidence and limits](docs/position-exits.md).

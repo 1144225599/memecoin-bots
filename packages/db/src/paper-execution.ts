@@ -8,6 +8,7 @@ import type {
   PaperDraws,
   QuoteEvidence,
 } from '@memebots/core';
+import { exitAuthorityValid, exitBuyIsFenced } from './position-exits.js';
 import { recordAudit } from './audit.js';
 import { withTransaction } from './pool.js';
 import type { Pool, Queryable } from './pool.js';
@@ -32,7 +33,7 @@ export function validatePaperIntent(intent: ApprovedOrderIntent): void {
   if (
     !/^[a-zA-Z0-9_.:-]{1,160}$/.test(intent.clientOrderId) ||
     !/^[a-zA-Z0-9_.:-]{1,160}$/.test(intent.approval.reference) ||
-    !['risk_manager', 'manual_paper_scenario'].includes(intent.approval.kind)
+    !['risk_manager', 'exit_manager', 'manual_paper_scenario'].includes(intent.approval.kind)
   )
     throw new Error('INVALID_APPROVAL');
   if (
@@ -120,15 +121,20 @@ interface OrderRow {
   paper_bankroll_lamports: string;
   decimals: number;
 }
-async function lockedOrder(db: Queryable, id: string): Promise<OrderRow> {
+export async function lockedPaperOrder(db: Queryable, id: string): Promise<OrderRow> {
+  const identity = (
+    await db.query<{ bot_id: string }>('SELECT bot_id FROM orders WHERE id=$1', [id])
+  ).rows[0];
+  if (!identity) throw new Error('ORDER_NOT_FOUND');
+  await db.query('SELECT id FROM bots WHERE id=$1 FOR UPDATE', [identity.bot_id]);
   const { rows } = await db.query<OrderRow>(
-    `SELECT o.*, b.mode bot_mode, b.paper_bankroll_lamports, t.decimals FROM orders o JOIN bots b ON b.id=o.bot_id JOIN tokens t ON t.mint=o.token_mint WHERE o.id=$1 FOR UPDATE OF o,b`,
+    `SELECT o.*, b.mode bot_mode, b.paper_bankroll_lamports, t.decimals FROM orders o JOIN bots b ON b.id=o.bot_id JOIN tokens t ON t.mint=o.token_mint WHERE o.id=$1 FOR UPDATE OF o`,
     [id],
   );
   if (!rows[0]) throw new Error('ORDER_NOT_FOUND');
   return rows[0];
 }
-function matches(order: OrderRow, intent: ApprovedOrderIntent): void {
+function matches(order: OrderRow, intent: ApprovedOrderIntent, requirePaperMode = true): void {
   if (
     order.id !== intent.orderId ||
     order.client_order_id !== intent.clientOrderId ||
@@ -139,37 +145,45 @@ function matches(order: OrderRow, intent: ApprovedOrderIntent): void {
     order.amount_in_raw !== intent.amountInRaw ||
     order.max_slippage_bps !== intent.maxSlippageBps ||
     order.mode !== 'paper' ||
-    order.bot_mode !== 'paper' ||
+    (requirePaperMode && order.bot_mode !== 'paper') ||
     order.veto_reason !== null ||
     order.status === 'vetoed'
   )
     throw new Error('PERSISTED_ORDER_MISMATCH');
 }
 export async function registerPaperIntent(pool: Pool, intent: ApprovedOrderIntent): Promise<void> {
+  await withTransaction(pool, (db) => registerPaperIntentInTransaction(db, intent));
+}
+/** Reuse a held bot-first transaction without acquiring another pooled connection. */
+export async function registerPaperIntentInTransaction(
+  db: Queryable,
+  intent: ApprovedOrderIntent,
+): Promise<void> {
   validatePaperIntent(intent);
-  await withTransaction(pool, async (db) => {
-    const order = await lockedOrder(db, intent.orderId);
-    matches(order, intent);
-    if (order.status !== 'pending') throw new Error('ORDER_NOT_PENDING');
-    const old = await db.query<{ intent: ApprovedOrderIntent }>(
-      'SELECT intent FROM paper_execution_intents WHERE order_id=$1',
-      [intent.orderId],
-    );
-    if (old.rows[0]) {
-      if (canonical(old.rows[0].intent) !== canonical(intent)) throw new Error('INTENT_IMMUTABLE');
-      return;
-    }
-    await db.query('INSERT INTO paper_execution_intents(order_id,intent) VALUES($1,$2)', [
-      intent.orderId,
-      JSON.stringify(intent),
-    ]);
-    await recordAudit(db, {
-      actor: intent.approval.kind === 'manual_paper_scenario' ? 'owner' : 'system',
-      action: 'paper.intent_registered',
-      entityType: 'order',
-      entityId: intent.orderId,
-      details: { approvalKind: intent.approval.kind, approvalReference: intent.approval.reference },
-    });
+  const order = await lockedPaperOrder(db, intent.orderId);
+  matches(order, intent);
+  if (order.bot_mode !== 'paper' || !(await exitAuthorityValid(db, intent)))
+    throw new Error('APPROVAL_AUTHORITY_REQUIRED');
+  if (await exitBuyIsFenced(db, intent)) throw new Error('POSITION_EXIT_FROZEN');
+  if (order.status !== 'pending') throw new Error('ORDER_NOT_PENDING');
+  const old = await db.query<{ intent: ApprovedOrderIntent }>(
+    'SELECT intent FROM paper_execution_intents WHERE order_id=$1',
+    [intent.orderId],
+  );
+  if (old.rows[0]) {
+    if (canonical(old.rows[0].intent) !== canonical(intent)) throw new Error('INTENT_IMMUTABLE');
+    return;
+  }
+  await db.query('INSERT INTO paper_execution_intents(order_id,intent) VALUES($1,$2)', [
+    intent.orderId,
+    JSON.stringify(intent),
+  ]);
+  await recordAudit(db, {
+    actor: intent.approval.kind === 'manual_paper_scenario' ? 'owner' : 'system',
+    action: 'paper.intent_registered',
+    entityType: 'order',
+    entityId: intent.orderId,
+    details: { approvalKind: intent.approval.kind, approvalReference: intent.approval.reference },
   });
 }
 export async function loadPaperIntent(
@@ -239,7 +253,7 @@ export async function preparePaperAttempt(
     throw new Error('DRAW_MISMATCH');
   if (!/^[a-zA-Z0-9_.:-]{1,160}$/.test(key)) throw new Error('INVALID_IDEMPOTENCY_KEY');
   return withTransaction(pool, async (db) => {
-    const order = await lockedOrder(db, intent.orderId);
+    const order = await lockedPaperOrder(db, intent.orderId);
     matches(order, intent);
     const persisted = await loadPaperIntent(db, intent.orderId);
     if (canonical(persisted) !== canonical(intent)) throw new Error('INTENT_MISMATCH');
@@ -251,6 +265,9 @@ export async function preparePaperAttempt(
       if (existing.rows[0].order_id !== intent.orderId) throw new Error('IDEMPOTENCY_CONFLICT');
       return toAttempt(existing.rows[0]);
     }
+    if (order.bot_mode !== 'paper' || !(await exitAuthorityValid(db, intent)))
+      throw new Error('APPROVAL_AUTHORITY_REQUIRED');
+    if (await exitBuyIsFenced(db, intent)) throw new Error('POSITION_EXIT_FROZEN');
     if (!['pending', 'partially_filled'].includes(order.status))
       throw new Error('ORDER_NOT_EXECUTABLE');
     const active = await db.query(
@@ -325,7 +342,7 @@ export async function inspectPaperOrder(db: Queryable, id: string): Promise<Exec
 }
 export async function cancelPaperOrder(pool: Pool, id: string): Promise<void> {
   await withTransaction(pool, async (db) => {
-    const order = await lockedOrder(db, id);
+    const order = await lockedPaperOrder(db, id);
     await loadPaperIntent(db, id);
     if (order.mode !== 'paper' || order.bot_mode !== 'paper') throw new Error('MODE_MISMATCH');
     if (['pending', 'partially_filled'].includes(order.status)) {
@@ -350,9 +367,9 @@ export async function settlePaperAttempt(
 ): Promise<ExecutionResult> {
   return withTransaction(pool, async (db) => {
     if (!/^[A-Z0-9_]{1,80}$/.test(candidate.reason)) throw new Error('INVALID_RESULT_REASON');
-    const order = await lockedOrder(db, attempt.orderId);
+    const order = await lockedPaperOrder(db, attempt.orderId);
     const intent = await loadPaperIntent(db, attempt.orderId);
-    matches(order, intent);
+    matches(order, intent, false);
     const previous = (
       await db.query<{ result: ExecutionResult }>(
         'SELECT result FROM paper_execution_results WHERE attempt_id=$1',
@@ -411,7 +428,9 @@ export async function settlePaperAttempt(
       networkFeeLamports: '0',
       priorityFeeLamports: '0',
     });
-    if (order.status === 'cancelled') candidate = toZero('CANCELLED', 'cancelled');
+    if (order.bot_mode !== 'paper' || !(await exitAuthorityValid(db, intent)))
+      candidate = toZero('EXIT_AUTHORITY_OR_MODE_REVOKED', 'cancelled');
+    else if (order.status === 'cancelled') candidate = toZero('CANCELLED', 'cancelled');
     else if (now >= intent.expiresAt) candidate = toZero('INTENT_EXPIRED');
     else if (!executionStillFresh()) candidate = toZero('MONOTONIC_DEADLINE_EXPIRED');
     else if (now < attempt.startedAt) candidate = toZero('CLOCK_MOVED_BACKWARD');
@@ -429,6 +448,10 @@ export async function settlePaperAttempt(
         candidate = toZero('QUOTE_EXPIRED_OR_CHAIN_CONTEXT_UNAVAILABLE');
     }
 
+    if (intent.side === 'buy' && pos) {
+      if (await exitBuyIsFenced(db, intent))
+        candidate = toZero('POSITION_EXIT_FROZEN', 'cancelled');
+    }
     const fillCandidate = ['filled', 'partial'].includes(candidate.status);
     const submittedFailure =
       candidate.status === 'failed' && candidate.reason === 'SIMULATED_SUBMITTED_FAILURE';
