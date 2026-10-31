@@ -21,10 +21,31 @@ import {
   updateControlledBot,
 } from './bot-control.js';
 import { registerPaperIntent, preparePaperAttempt, settlePaperAttempt } from './paper-execution.js';
-import type { ApprovedOrderIntent, PaperModel } from '@memebots/core';
+import type { ApprovedOrderIntent, ExecutionResult, PaperModel } from '@memebots/core';
 import { PaperBroker } from '../../../apps/engine/src/paper/broker.js';
 import { normalizeJupiterQuote } from '../../../apps/engine/src/paper/quote.js';
 import { drawModel } from '../../../apps/engine/src/paper/model.js';
+
+/** Both broker versions must fence off-mode work: older rejects, integrated persists zero cancellation. */
+async function expectOffFencedOutcome(work: Promise<ExecutionResult>): Promise<void> {
+  const outcome = await work.then(
+    (result) => ({ kind: 'result' as const, result }),
+    (error: unknown) => ({ kind: 'rejected' as const, error }),
+  );
+  if (outcome.kind === 'rejected') {
+    expect(outcome.error).toBeInstanceOf(Error);
+    expect(outcome.error).toHaveProperty('message', 'PERSISTED_ORDER_MISMATCH');
+  } else {
+    expect(outcome.result).toMatchObject({
+      status: 'cancelled',
+      reason: 'EXIT_AUTHORITY_OR_MODE_REVOKED',
+      inputRaw: '0',
+      outputRaw: '0',
+      networkFeeLamports: '0',
+      priorityFeeLamports: '0',
+    });
+  }
+}
 
 describe.skipIf(!hasTestDatabase)('local bot control with genuine offline preparation', () => {
   const pool = hasTestDatabase ? createTestPool() : undefined!;
@@ -373,7 +394,7 @@ describe.skipIf(!hasTestDatabase)('local bot control with genuine offline prepar
         now,
       );
       await transitionControlledBot(single, b.id, { mode: 'off', revision: b.revision });
-      await expect(
+      await expectOffFencedOutcome(
         settlePaperAttempt(single, attempt, {
           attemptId: attempt.id,
           orderId: id,
@@ -385,14 +406,13 @@ describe.skipIf(!hasTestDatabase)('local bot control with genuine offline prepar
           priorityFeeLamports: '0',
           costsProvenance: 'MODEL',
         }),
-      ).resolves.toMatchObject({
-        status: 'cancelled',
-        reason: 'EXIT_AUTHORITY_OR_MODE_REVOKED',
-        inputRaw: '0',
-        outputRaw: '0',
-        networkFeeLamports: '0',
-        priorityFeeLamports: '0',
-      });
+      );
+      expect((await getControlledBot(pool, b.id)).paperBankrollLamports).toBe(
+        b.paperBankrollLamports,
+      );
+      expect((await pool.query('SELECT status FROM orders WHERE id=$1', [id])).rows[0].status).toBe(
+        'cancelled',
+      );
       expect((await pool.query('SELECT count(*)::int count FROM fills')).rows[0].count).toBe(0);
     } finally {
       await single.end();
@@ -504,14 +524,10 @@ describe.skipIf(!hasTestDatabase)('local bot control with genuine offline prepar
           },
         );
         if (offBeforeFill) {
-          await expect(broker.execute(intent, `race:${id}`)).resolves.toMatchObject({
-            status: 'cancelled',
-            reason: 'EXIT_AUTHORITY_OR_MODE_REVOKED',
-            inputRaw: '0',
-            outputRaw: '0',
-            networkFeeLamports: '0',
-            priorityFeeLamports: '0',
-          });
+          await expectOffFencedOutcome(broker.execute(intent, `race:${id}`));
+          expect(
+            (await pool.query('SELECT status FROM orders WHERE id=$1', [id])).rows[0].status,
+          ).toBe('cancelled');
           expect((await getControlledBot(pool, b.id)).paperBankrollLamports).toBe(
             b.paperBankrollLamports,
           );

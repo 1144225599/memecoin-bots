@@ -133,7 +133,7 @@ Do not run the preview seed against a personal-use database.
 
 Run `pnpm check`. Integration tests require `TEST_DATABASE_URL` ending `_test` and
 `REQUIRE_DB_TESTS=1`; market tests use a separate `MARKET_DATA_TEST_DATABASE_URL` with
-`REQUIRE_MARKET_DATA_TESTS=1`. Tests wipe their schemas and generate only ephemeral
+`REQUIRE_MARKET_DATA_DB_TESTS=1`. Tests wipe their schemas and generate only ephemeral
 wallet material. The BOT15 suite covers prepare/recovery, claim race/rollback,
 exact cash, config/name audits, session-authenticated API create/edit/off/paper,
 live refusal, mode-monitoring expectations, revision conflicts and settlement fencing.
